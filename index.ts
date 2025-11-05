@@ -92,7 +92,7 @@ async function main() {
   }
 
   // Define your query
-  const query = "Tell me about Grenish Rai";
+  const query = "tell me about authrix";
 
   console.log(`\n🔍 Searching for relevant context...`);
   const queryEmb = await embed(query);
