@@ -5,8 +5,13 @@ import { readFileSync } from "fs";
 // Initialize Chroma client
 const chroma = new ChromaClient({ host: "localhost", port: 8000, ssl: false });
 
-// --- Embed text using Ollama ---
-async function embed(text: string) {
+/**
+ * Embeds text using the Ollama API.
+ * @param {string} text - The text to embed.
+ * @returns {Promise<number[]>} A promise that resolves to an array of numbers representing the embedding.
+ * @throws {Error} If the embedding request fails.
+ */
+async function embed(text: string): Promise<number[]> {
   const res = await fetch("http://localhost:11434/api/embeddings", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -18,8 +23,13 @@ async function embed(text: string) {
   return data.embedding as number[];
 }
 
-// --- Generate completion from Ollama ---
-async function generate(prompt: string) {
+/**
+ * Generates a completion from the Ollama API.
+ * @param {string} prompt - The prompt to generate a completion for.
+ * @returns {Promise<string>} A promise that resolves to the generated text.
+ * @throws {Error} If the generation request fails.
+ */
+async function generate(prompt: string): Promise<string> {
   const res = await fetch("http://localhost:11434/api/generate?stream=false", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -47,7 +57,12 @@ async function generate(prompt: string) {
   return fullText.trim();
 }
 
-// --- Load and prepare data ---
+/**
+ * Loads and prepares data from a JSON file.
+ * @param {string} path - The path to the JSON file.
+ * @returns {string[]} An array of strings, where each string is a paragraph from the file.
+ * @throws {Error} If the data is not an array of paragraphs.
+ */
 function loadData(path: string): string[] {
   const raw = readFileSync(path, "utf-8");
   const json = JSON.parse(raw);
@@ -56,8 +71,11 @@ function loadData(path: string): string[] {
   return json.map((p: string) => p.trim()).filter(Boolean);
 }
 
-// --- Main workflow ---
-async function main() {
+/**
+ * The main workflow of the application.
+ * @returns {Promise<void>} A promise that resolves when the main workflow is complete.
+ */
+async function main(): Promise<void> {
   console.log("🔹 Initializing RAG...");
 
   // Load your data.json

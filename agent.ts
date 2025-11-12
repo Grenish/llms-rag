@@ -47,12 +47,31 @@ interface SearchCache {
 }
 
 /* ----------------------- UTIL ------------------------- */
+/**
+ * A custom error class for operations that can be retried.
+ * @class
+ * @extends Error
+ */
 class RetryableError extends Error {
+  /**
+   * Creates an instance of RetryableError.
+   * @param {string} message - The error message.
+   * @param {boolean} [retryable=true] - Indicates if the error is retryable.
+   */
   constructor(message: string, public readonly retryable = true) {
     super(message);
   }
 }
 
+/**
+ * Retries an async function with exponential backoff.
+ * @template T
+ * @param {() => Promise<T>} fn - The async function to retry.
+ * @param {number} [maxRetries=CONFIG.OLLAMA.MAX_RETRIES] - The maximum number of retries.
+ * @param {number} [delay=CONFIG.OLLAMA.RETRY_DELAY] - The initial delay in milliseconds.
+ * @returns {Promise<T>} The result of the async function.
+ * @throws Will throw the last error if all retries fail.
+ */
 async function retryWithBackoff<T>(
   fn: () => Promise<T>,
   maxRetries = CONFIG.OLLAMA.MAX_RETRIES,
@@ -76,7 +95,20 @@ async function retryWithBackoff<T>(
 }
 
 /* -------------------- OLLAMA SERVICE ------------------ */
+/**
+ * A service for interacting with the Ollama API.
+ * @class
+ */
 class OllamaService {
+  /**
+   * Fetches a URL with a timeout.
+   * @private
+   * @param {string} url - The URL to fetch.
+   * @param {any} options - The fetch options.
+   * @param {number} [timeout] - The timeout in milliseconds.
+   * @returns {Promise<Response>} The fetch response.
+   * @throws {RetryableError} If the request times out.
+   */
   private async fetchWithTimeout(url: string, options: any, timeout?: number): Promise<Response> {
     const actualTimeout = timeout || CONFIG.OLLAMA.GENERATION_TIMEOUT;
     const controller = new AbortController();
@@ -95,6 +127,13 @@ class OllamaService {
     }
   }
 
+  /**
+   * Generates a completion from the Ollama API.
+   * @param {string} model - The model to use for generation.
+   * @param {string} prompt - The prompt for the generation.
+   * @param {number} [temperature=0.3] - The temperature for the generation.
+   * @returns {Promise<string>} The generated text.
+   */
   async generate(model: string, prompt: string, temperature = 0.3): Promise<string> {
     return retryWithBackoff(async () => {
       const res = await this.fetchWithTimeout(
@@ -126,6 +165,11 @@ class OllamaService {
     });
   }
 
+  /**
+   * Generates embeddings for a given text from the Ollama API.
+   * @param {string} text - The text to embed.
+   * @returns {Promise<number[]>} The generated embeddings.
+   */
   async embed(text: string): Promise<number[]> {
     return retryWithBackoff(async () => {
       const res = await this.fetchWithTimeout(
@@ -155,12 +199,27 @@ class OllamaService {
 }
 
 /* ---------------------- RAG SERVICE ------------------- */
+/**
+ * A service for Retrieval-Augmented Generation (RAG).
+ * @class
+ */
 class RAGService {
   private collection?: Collection;
   private embedCache = new Map<string, number[]>();
 
+  /**
+   * Creates an instance of RAGService.
+   * @param {ChromaClient} chroma - The ChromaDB client.
+   * @param {OllamaService} ollama - The Ollama service.
+   */
   constructor(private chroma: ChromaClient, private ollama: OllamaService) {}
 
+  /**
+   * Gets a cached embedding or generates a new one.
+   * @private
+   * @param {string} text - The text to embed.
+   * @returns {Promise<number[]>} The embedding.
+   */
   private async getCachedEmbedding(text: string): Promise<number[]> {
     const cacheKey = text.slice(0, 100); // Use first 100 chars as cache key
     const cached = this.embedCache.get(cacheKey);
@@ -170,6 +229,11 @@ class RAGService {
     return embedding;
   }
 
+  /**
+   * Initializes the RAG service by setting up the ChromaDB collection.
+   * @param {string} dataPath - The path to the data file.
+   * @returns {Promise<void>}
+   */
   async initialize(dataPath: string): Promise<void> {
     try {
       this.collection = await this.chroma.getCollection({ name: CONFIG.CHROMA.COLLECTION_NAME });
@@ -185,6 +249,12 @@ class RAGService {
     }
   }
 
+  /**
+   * Indexes documents from a data file into the ChromaDB collection.
+   * @private
+   * @param {string} dataPath - The path to the data file.
+   * @returns {Promise<void>}
+   */
   private async indexDocuments(dataPath: string): Promise<void> {
     console.log("📚 Indexing local documents...");
     const docs = this.loadData(dataPath);
@@ -218,6 +288,13 @@ class RAGService {
     console.log(`✅ Indexing completed in ${elapsed}s`);
   }
 
+  /**
+   * Loads data from a JSON file.
+   * @private
+   * @param {string} path - The path to the JSON file.
+   * @returns {string[]} The loaded data.
+   * @throws {Error} If the data is not a JSON array of paragraphs.
+   */
   private loadData(path: string): string[] {
     try {
       const raw = readFileSync(path, "utf-8");
@@ -229,6 +306,12 @@ class RAGService {
     }
   }
 
+  /**
+   * Searches the ChromaDB collection for relevant documents.
+   * @param {string} query - The search query.
+   * @param {number} [maxResults] - The maximum number of results to return.
+   * @returns {Promise<string>} The search results as a single string.
+   */
   async search(query: string, maxResults?: number): Promise<string> {
     if (!this.collection) throw new Error("RAG not initialized");
     
@@ -258,10 +341,18 @@ class RAGService {
 }
 
 /* -------------------- TAVILY WEB SEARCH -------------------- */
+/**
+ * A service for performing web searches using the Tavily API.
+ * @class
+ */
 class WebSearchService {
   private apiKey: string;
   private searchCache: Map<string, SearchCache> = new Map();
 
+  /**
+   * Creates an instance of WebSearchService.
+   * @throws {Error} If the TAVILY_API_KEY is not set.
+   */
   constructor() {
     this.apiKey = String(process.env.TAVILY_API_KEY || "");
     if (!this.apiKey) {
@@ -271,10 +362,22 @@ class WebSearchService {
     }
   }
 
+  /**
+   * Gets the cache key for a given query.
+   * @private
+   * @param {string} query - The search query.
+   * @returns {string} The cache key.
+   */
   private getCacheKey(query: string): string {
     return query.toLowerCase().trim();
   }
 
+  /**
+   * Gets a cached search result.
+   * @private
+   * @param {string} query - The search query.
+   * @returns {string | null} The cached result or null if not found.
+   */
   private getCachedResult(query: string): string | null {
     const key = this.getCacheKey(query);
     const cached = this.searchCache.get(key);
@@ -287,6 +390,13 @@ class WebSearchService {
     return null;
   }
 
+  /**
+   * Caches a search result.
+   * @private
+   * @param {string} query - The search query.
+   * @param {string} result - The search result.
+   * @returns {void}
+   */
   private setCachedResult(query: string, result: string): void {
     const key = this.getCacheKey(query);
     this.searchCache.set(key, {
@@ -296,6 +406,12 @@ class WebSearchService {
     });
   }
 
+  /**
+   * Performs a web search using the Tavily API.
+   * @param {string} query - The search query.
+   * @param {number} [retryCount=0] - The current retry count.
+   * @returns {Promise<string>} The search results as a single string.
+   */
   async search(query: string, retryCount = 0): Promise<string> {
     // Check cache first
     const cached = this.getCachedResult(query);
@@ -365,6 +481,12 @@ class WebSearchService {
     }
   }
 
+  /**
+   * Parses the response from the Tavily API.
+   * @private
+   * @param {any} data - The response data.
+   * @returns {string} The parsed search results.
+   */
   private parseTavilyResponse(data: any): string {
     const sections: string[] = [];
 
@@ -399,15 +521,30 @@ class WebSearchService {
 }
 
 /* ------------------------ AGENT ------------------------- */
+/**
+ * An AI agent that can use RAG and web search to answer questions.
+ * @class
+ */
 class AIAgent {
   private decisionCache = new Map<string, Tool>();
 
+  /**
+   * Creates an instance of AIAgent.
+   * @param {OllamaService} ollama - The Ollama service.
+   * @param {RAGService} rag - The RAG service.
+   * @param {WebSearchService} webSearch - The web search service.
+   */
   constructor(
     private ollama: OllamaService,
     private rag: RAGService,
     private webSearch: WebSearchService
   ) {}
 
+  /**
+   * Decides which tool to use for a given query.
+   * @param {string} query - The user's query.
+   * @returns {Promise<Tool>} The selected tool.
+   */
   async decideTool(query: string): Promise<Tool> {
     // Check cache
     const cached = this.decisionCache.get(query.toLowerCase());
@@ -480,6 +617,12 @@ Analyze the question and respond with JSON:`;
     return tool;
   }
 
+  /**
+   * An advanced heuristic to decide which tool to use.
+   * @private
+   * @param {string} query - The user's query.
+   * @returns {Tool} The selected tool.
+   */
   private advancedHeuristicDecision(query: string): Tool {
     const lower = query.toLowerCase();
     
@@ -543,6 +686,11 @@ Analyze the question and respond with JSON:`;
     return "RAG";
   }
 
+  /**
+   * Answers a query using the appropriate tool(s).
+   * @param {string} query - The user's query.
+   * @returns {Promise<string>} The generated answer.
+   */
   async answer(query: string): Promise<string> {
     const tool = await this.decideTool(query);
     console.log(`🧠 Selected Tool: ${tool}`);
@@ -607,6 +755,13 @@ COMPREHENSIVE ANSWER:`;
     return this.postProcessAnswer(answer, tool);
   }
 
+  /**
+   * Post-processes the generated answer.
+   * @private
+   * @param {string} answer - The generated answer.
+   * @param {Tool} tool - The tool used to generate the answer.
+   * @returns {string} The post-processed answer.
+   */
   private postProcessAnswer(answer: string, tool: Tool): string {
     // Clean up any residual prompt artifacts
     answer = answer.replace(/^(COMPREHENSIVE ANSWER:|RESPONSE:|ANSWER:)/i, "").trim();
@@ -630,6 +785,11 @@ COMPREHENSIVE ANSWER:`;
 }
 
 /* ------------------------ MAIN -------------------------- */
+/**
+ * The main function of the application.
+ * @async
+ * @returns {Promise<void>}
+ */
 async function main() {
   try {
     console.log("🚀 Initializing Enhanced AI Agent with Tavily Web Search + RAG...\n");
